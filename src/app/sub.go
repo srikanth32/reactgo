@@ -2,86 +2,92 @@ package main
 
 import (
 	"database/sql"
-	"html/template"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"time"
+
+	"github.com/pborman/uuid"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/rs/cors"
 )
 
-var db *sql.DB
-var err error
-var tpl *template.Template
+//var db *sql.DB
+//var err error
+//var tpl *template.Template
 
-// func ParseTemplates() *template.Template {
-// 	templ := template.New("")
-// 	err := filepath.Walk("./src/app", func(path string, info os.FileInfo, err error) error {
-// 		if strings.Contains(path, ".js") {
-// 			_, err = templ.ParseFiles(path)
-// 			if err != nil {
-// 				log.Println(err)
-// 			}
-// 		}
-
-// 		return err
-// 	})
-
-// 	if err != nil {
-// 		panic(err)
-// 	}
-
-// 	return templ
-// }
-func init() {
-
-	// repoFrontend := "src/*.js"
-	// http.Handle("/static/", http.StripPrefix("/static/",
-	// 	http.FileServer(http.Dir(repoFrontend))))
-	db, err = sql.Open("mysql", "root:root@/test")
-	_, err := template.New("").ParseFiles("index.js", "success.js")
-	if err != nil {
-		log.Fatal("Error loading templates:" + err.Error())
-	}
-	//tpl = template.New("").ParseFiles("src/*")
+type RegisterData struct {
+	Id   int
+	Name string `json:"name,omitempty"`
+}
+type Response struct {
+	Status  string
+	Code    int
+	Message interface{}
 }
 
-// func userForm(w http.ResponseWriter, req *http.Request) {
+var db, err = sql.Open("mysql", "root:root@/test")
+var timezone, _ = time.LoadLocation("America/New_York")
+var zone, _ = time.Now().In(timezone).Zone()
 
-// 	if err != nil {
-// 		http.Error(w, err.Error(), http.StatusInternalServerError)
-// 		return
-// 	}
-// }
-func personalDetails(res http.ResponseWriter, req *http.Request) {
-	err = tpl.ExecuteTemplate(res, "index.js", nil)
-	if req.Method == http.MethodPost {
-		fname := req.FormValue("name")
-
-		_, err = db.Exec(
-			"INSERT INTO user (name) VALUES (?)",
-			fname,
-		)
-		if err != nil {
-			http.Error(res, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		http.Redirect(res, req, "/", http.StatusSeeOther)
-		return
+func getDBConnectivity(db *sql.DB) (bool, error) {
+	err = db.Ping()
+	if err != nil {
+		log.Println("db connection: ", err.Error())
+		return false, err
 	}
-	http.Error(res, "Method Not Supported", http.StatusMethodNotAllowed)
+	return true, nil
+}
+
+func personalDetails(res http.ResponseWriter, req *http.Request) {
+	status := "true"
+	msg := "Registration Successful"
+	code := 0
+	check, err := getDBConnectivity(db)
+	if !check {
+		fmt.Println(err)
+		status = "fail"
+		code = 1
+		msg = "error connectiing to db"
+	}
+
+	var js RegisterData
+	msgs := req.FormValue("json")
+	err = json.Unmarshal([]byte(msgs), &js)
+	if err != nil {
+		fmt.Println("error:", err)
+		status = "fail"
+		msg = "error while unmarshal json"
+		log.Println(err)
+	}
+
+	q := fmt.Sprintf("insert into user values('%s','%s')", uuid.New(), js.Name)
+	_, err = db.Exec(q)
+	if err != nil {
+		fmt.Println(err)
+		status = "fail"
+		msg = "error while while inserting data"
+	}
+
+	w := Response{Status: status, Code: code, Message: msg}
+	resp, err := json.Marshal(w)
+	if err != nil {
+		fmt.Println("error:", err)
+	}
+
+	//fmt.Println(string(resp))
+	fmt.Fprintf(res, string(resp))
 
 }
 
 func main() {
 
-	defer db.Close()
-
-	err = db.Ping()
-	if err != nil {
-		panic(err.Error())
-	}
 	//http.HandleFunc("/", userForm)
-	http.HandleFunc("/index", personalDetails)
+	router := http.NewServeMux()
+	router.HandleFunc("/index", personalDetails)
 
-	http.ListenAndServe(":8080", nil)
+	handler := cors.AllowAll().Handler(router)
+	http.ListenAndServe(":3033", handler)
 }
